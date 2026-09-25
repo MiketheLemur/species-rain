@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Species Rain — an island biogeography machine</title>
+<style>
+  :root { --ink:#e8e3d3; --bg:#0d1411; --panel:#141c17; --gold:#b08d3e; --sea:#16303a; --green:#2e5d43; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family: Georgia, 'Times New Roman', serif; line-height:1.55; }
+  header { text-align:center; padding: 34px 18px 10px; }
+  header h1 { font-size: 2.2rem; letter-spacing: .35em; margin:0 0 6px; color:var(--gold); font-weight:normal; }
+  header p { margin:0 auto; max-width: 640px; font-style: italic; opacity:.85; }
+  main { max-width: 1020px; margin: 0 auto; padding: 10px 18px 40px; }
+  canvas#world { width:100%; height:auto; display:block; background:var(--sea); border:1px solid #2a3a32; border-radius:6px; }
+  .controls { display:flex; flex-wrap:wrap; gap:18px; align-items:flex-end; background:var(--panel); border:1px solid #2a3a32; border-radius:6px; padding:14px 18px; margin-top:14px; }
+  .ctl { display:flex; flex-direction:column; gap:4px; font-size:.85rem; }
+  .ctl label { color:var(--gold); letter-spacing:.08em; text-transform:uppercase; font-size:.72rem; }
+  .ctl output { font-style:italic; opacity:.8; }
+  input[type=range] { width:180px; accent-color: var(--gold); }
+  button { background:var(--gold); color:#0d1411; border:none; border-radius:4px; padding:9px 18px; font-family:inherit; font-size:.95rem; cursor:pointer; letter-spacing:.05em; }
+  button:hover { filter:brightness(1.1); }
+  .stats { display:flex; flex-wrap:wrap; gap:26px; margin:16px 2px 0; font-size:1.02rem; }
+  .stats b { color:var(--gold); font-weight:normal; font-size:1.35rem; margin-right:6px; }
+  .stats span { white-space:nowrap; }
+  canvas#chart { width:100%; height:120px; display:block; background:var(--panel); border:1px solid #2a3a32; border-radius:6px; margin-top:12px; }
+  .chartlabel { font-size:.8rem; letter-spacing:.1em; text-transform:uppercase; color:var(--gold); margin:18px 0 -6px; }
+  #log { list-style:none; margin:10px 0 0; padding:0; font-size:.92rem; min-height:8.2em; }
+  #log li { padding:2px 0; border-bottom:1px dotted #2a3a32; }
+  #log li .t { color:var(--gold); margin-right:8px; }
+  #log li.arrival::before { content:"▸ "; color:#7fc97f; }
+  #log li.extinct::before { content:"✕ "; color:#c96a5a; }
+  footer { margin-top:26px; font-size:.95rem; opacity:.9; border-top:1px solid #2a3a32; padding-top:16px; }
+  footer h2 { color:var(--gold); font-weight:normal; letter-spacing:.15em; font-size:1.05rem; text-transform:uppercase; }
+  a { color:var(--gold); }
+</style>
+</head>
+<body>
+<header>
+  <h1>SPECIES RAIN</h1>
+  <p>An island biogeography machine. Species arrive by wind and water. Most of them die. The island forgets.</p>
+</header>
+<main>
+  <canvas id="world" width="980" height="500"></canvas>
+
+  <div class="controls">
+    <div class="ctl">
+      <label for="size">Island size</label>
+      <input type="range" id="size" min="0" max="100" value="55">
+      <output id="sizeOut"></output>
+    </div>
+    <div class="ctl">
+      <label for="dist">Distance from mainland</label>
+      <input type="range" id="dist" min="0" max="100" value="40">
+      <output id="distOut"></output>
+    </div>
+    <div class="ctl">
+      <label for="speed">Tick speed</label>
+      <input type="range" id="speed" min="0" max="100" value="45">
+      <output id="speedOut"></output>
+    </div>
+    <button id="storm">Summon storm</button>
+    <button id="reset">Reseed island</button>
+  </div>
+
+  <div class="stats">
+    <span><b id="sRich">0</b> species resident</span>
+    <span><b id="sEq">–</b> theoretical equilibrium</span>
+    <span><b id="sArr">0</b> arrivals</span>
+    <span><b id="sExt">0</b> extinctions</span>
+    <span><b id="sTick">0</b> ticks</span>
+  </div>
+
+  <div class="chartlabel">Species richness over time (dashed line: predicted equilibrium)</div>
+  <canvas id="chart" width="980" height="120"></canvas>
+
+  <div class="chartlabel">The ledger</div>
+  <ul id="log"></ul>
+
+  <footer>
+    <h2>What is this</h2>
+    <p>In 1963, Robert MacArthur and Edward O. Wilson proposed that the number of species on an island settles at an <em>equilibrium</em>: new species immigrate at a rate that falls as the island fills up, while resident species go extinct at a rate that rises as competition tightens. Big islands hold more. Near islands fill faster. Nothing is permanent; the count is stable but the cast keeps turning over.</p>
+    <p>This machine runs that model live. Dots drift off the mainland — every one a would-be colonist. Those that reach the island take root and jitter with nervous energy. Every tick, each resident rolls the extinction dice, and the dice are loaded by crowding. Push the sliders: make the island a continent's shy cousin or a rock that only storms can find. Hit <b>Summon storm</b> to throw a burst of colonists at the shore and watch the ledger fill with arrivals the island cannot keep.</p>
+    <p>The dashed line on the chart is the model's own prediction of where richness should settle. The solid line is what actually happens. The gap between them is where the interesting stuff lives.</p>
+    <p>Built by <a href="https://github.com/MiketheLemur">Mike</a>, a lemur in hyperspace. The names of the colonists are invented; any resemblance to real lemurs, living or drowned, is a problem for the colonists.</p>
+  </footer>
+</main>
+
+<script>
+"use strict";
+// ---------- model state ----------
+const world = document.getElementById("world");
+const wctx = world.getContext("2d");
+const chart = document.getElementById("chart");
+const cctx = chart.getContext("2d");
+
+const POOL = 90;              // total species that could ever arrive
+const BASE_LAMBDA = 0.055;    // base immigration probability per tick
+const BASE_MU = 0.0016;       // base extinction probability per species per tick
+
+let params = { size: 0.55, dist: 0.40, speed: 0.45 };
+let K = 40;                   // carrying capacity (from island size)
+let Sstar = 0;                // theoretical equilibrium
+let residents = [];           // {x,y,hue,name,gen,age}
+let drifters = [];            // {x,y,vx,vy,name,hue}
+let history = [];             // richness samples
+let flashes = [];             // colonization flashes {x,y,ttl}
+let arrivals = 0, extinctions = 0, ticks = 0;
+let storm = 0;                // extra arrival pressure, decays
+
+// ---------- island geometry ----------
+function island() {
+  const r = 90 + params.size * 130;
+  return { cx: 980 - 40 - r - params.dist * 320, cy: 250, rx: r, ry: r * 0.62 };
+}
+
+// ---------- made-up taxonomy ----------
+const G1 = ["Vel","Tsim","Andr","Kir","Zob","Fan","Mar","Sab","Tok","Ran","Bem","Haz","Ant","Vor","Tav"];
+const G2 = ["iro","anga","ela","oma","uru","asa","aka","ina","ota","evo"];
+const EP = ["dawn-feathered","ash-throated","silent","crowned","blue-vented","long-tailed","stone-gray","night-eyed","soft-footed","hollow-boned","rain-drunk","thorn-backed"];
+const HUES = [8, 28, 48, 95, 140, 185, 210, 265, 300, 330];
+
+function makeSpecies() {
+  const g = G1[(Math.random()*G1.length)|0] + G2[(Math.random()*G2.length)|0] + " " + EP[(Math.random()*EP.length)|0];
+  return { name: g, hue: HUES[(Math.random()*HUES.length)|0] };
+}
+
+// ---------- derived quantities ----------
+function recompute() {
+  K = Math.round(14 + params.size * 90);
+  const lambda0 = BASE_LAMBDA * (0.25 + params.size * 1.4) / (0.35 + params.dist * 2.4) + storm * 0.05;
+  // equilibrium: lambda0*(1 - S/POOL) = BASE_MU * S / K  =>  S = lambda0 / (lambda0/POOL + BASE_MU/K)
+  Sstar = lambda0 / (lambda0 / POOL + BASE_MU / K);
+  document.getElementById("sizeOut").textContent = params.size < .33 ? "a drowned rock" : params.size < .66 ? "respectable" : "a small continent";
+  document.getElementById("distOut").textContent = params.dist < .33 ? "a stone's throw" : params.dist < .66 ? "an honest voyage" : "beyond the horizon";
+  document.getElementById("speedOut").textContent = params.speed < .33 ? "geological" : params.speed < .66 ? "brisk" : "frantic";
+  document.getElementById("sEq").textContent = Math.round(Sstar);
+}
+
+// ---------- log ----------
+const logEl = document.getElementById("log");
+function logEvent(cls, text) {
+  const li = document.createElement("li");
+  li.className = cls;
+  li.innerHTML = '<span class="t">t+' + ticks + "</span>" + text;
+  logEl.prepend(li);
+  while (logEl.children.length > 8) logEl.lastChild.remove();
+}
+
+// ---------- simulation ----------
+function inIsland(x, y) {
+  const I = island();
+  const dx = (x - I.cx) / I.rx, dy = (y - I.cy) / I.ry;
+  return dx*dx + dy*dy <= 1;
+}
+
+function tick() {
+  ticks++;
+  storm *= 0.995;
+  const I = island();
+  const S = residents.length;
+
+  // immigration: rate falls as the pool's species already live here
+  const lambda = (BASE_LAMBDA * (0.25 + params.size * 1.4) / (0.35 + params.dist * 2.4) + storm * 0.06) * (1 - S / POOL);
+  if (Math.random() < lambda) {
+    const sp = makeSpecies();
+    // start at mainland edge, drift toward the island
+    drifters.push({
+      x: 30, y: 60 + Math.random() * 380,
+      vx: 2.2 + Math.random() * 2.2, vy: (Math.random() - .5) * 1.2,
+      name: sp.name, hue: sp.hue, ttl: 400
+    });
+  }
+
+  // move drifters; colonize on landfall
+  for (let i = drifters.length - 1; i >= 0; i--) {
+    const d = drifters[i];
+    d.x += d.vx; d.y += d.vy + Math.sin((ticks + i) / 14) * 0.5; d.ttl--;
+    if (inIsland(d.x, d.y)) {
+      arrivals++;
+      residents.push({ x: d.x, y: d.y, hue: d.hue, name: d.name, age: 0 });
+      flashes.push({ x: d.x, y: d.y, ttl: 40 });
+      logEvent("arrival", "<b>" + d.name + "</b> colonized the island.");
+      drifters.splice(i, 1);
+    } else if (d.ttl <= 0 || d.x > 990 || d.y < -20 || d.y > 520) {
+      drifters.splice(i, 1); // lost at sea
+    }
+  }
+
+  // extinction: probability rises with crowding
+  for (let i = residents.length - 1; i >= 0; i--) {
+    const r = residents[i];
+    r.age++;
+    r.x += (Math.random() - .5) * 0.7; r.y += (Math.random() - .5) * 0.7;
+    if (!inIsland(r.x, r.y)) { r.x = I.cx + (Math.random()-.5)*I.rx; r.y = I.cy + (Math.random()-.5)*I.ry; }
+    if (Math.random() < BASE_MU * S / K) {
+      extinctions++;
+      logEvent("extinct", "<b>" + r.name + "</b> went extinct. It is survived by no one.");
+      residents.splice(i, 1);
+    }
+  }
+
+  for (let i = flashes.length - 1; i >= 0; i--) { if (--flashes[i].ttl <= 0) flashes.splice(i, 1); }
+
+  history.push(S);
+  if (history.length > 300) history.shift();
+  recompute();
+  updateStats();
+}
+
+// ---------- drawing ----------
+function drawWorld() {
+  const g = wctx, I = island();
+  // sea
+  const sea = g.createLinearGradient(0, 0, 980, 500);
+  sea.addColorStop(0, "#0f2530"); sea.addColorStop(1, "#16303a");
+  g.fillStyle = sea; g.fillRect(0, 0, 980, 500);
+  // wave streaks
+  g.strokeStyle = "rgba(255,255,255,0.06)"; g.lineWidth = 1;
+  for (let w = 0; w < 8; w++) {
+    const y = 40 + w * 58;
+    g.beginPath();
+    for (let x = 0; x <= 980; x += 20) g.lineTo(x, y + Math.sin(x / 90 + ticks / 30 + w) * 8);
+    g.stroke();
+  }
+  // mainland
+  g.fillStyle = "#1b2b20";
+  g.fillRect(0, 0, 70, 500);
+  g.fillStyle = "#b08d3e"; g.font = "italic 13px Georgia";
+  g.save(); g.translate(26, 250); g.rotate(-Math.PI/2); g.textAlign = "center";
+  g.fillText("THE MAINLAND — an infinite source of trouble", 0, 0); g.restore();
+  // island
+  const isl = g.createRadialGradient(I.cx, I.cy, 10, I.cx, I.cy, I.rx);
+  isl.addColorStop(0, "#3a6b4a"); isl.addColorStop(0.75, "#2e5d43"); isl.addColorStop(1, "#1e4030");
+  g.fillStyle = isl;
+  g.beginPath(); g.ellipse(I.cx, I.cy, I.rx, I.ry, 0, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = "rgba(232,227,211,0.35)"; g.lineWidth = 2;
+  g.beginPath(); g.ellipse(I.cx, I.cy, I.rx, I.ry, 0, 0, Math.PI * 2); g.stroke();
+  g.fillStyle = "rgba(232,227,211,0.85)"; g.font = "italic 14px Georgia"; g.textAlign = "center";
+  g.fillText("NOSY VARY", I.cx, I.cy - I.ry - 10);
+  // distance arrow
+  g.strokeStyle = "rgba(176,141,62,0.5)"; g.setLineDash([6,6]);
+  g.beginPath(); g.moveTo(90, 450); g.lineTo(I.cx - I.rx, 450); g.stroke(); g.setLineDash([]);
+  g.fillStyle = "rgba(176,141,62,0.8)"; g.font = "12px Georgia";
+  g.fillText("dispersal filter", (90 + I.cx - I.rx) / 2, 442);
+  // residents
+  for (const r of residents) {
+    g.fillStyle = "hsl(" + r.hue + ",55%,60%)";
+    g.beginPath(); g.arc(r.x, r.y, 4.5, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = "rgba(0,0,0,0.4)"; g.lineWidth = 1; g.stroke();
+  }
+  // drifters
+  for (const d of drifters) {
+    g.fillStyle = "hsla(" + d.hue + ",55%,70%,0.85)";
+    g.beginPath(); g.arc(d.x, d.y, 3, 0, Math.PI * 2); g.fill();
+  }
+  // flashes
+  for (const f of flashes) {
+    g.strokeStyle = "rgba(255,240,200," + (f.ttl / 40) * 0.9 + ")";
+    g.lineWidth = 2;
+    g.beginPath(); g.arc(f.x, f.y, (40 - f.ttl) * 0.9 + 4, 0, Math.PI * 2); g.stroke();
+  }
+}
+
+function drawChart() {
+  const g = cctx, W = 980, H = 120;
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = "#141c17"; g.fillRect(0, 0, W, H);
+  const maxV = Math.max(10, ...history, Sstar);
+  const y = v => H - 10 - (v / maxV) * (H - 24);
+  // equilibrium dashed line
+  g.strokeStyle = "rgba(176,141,62,0.7)"; g.setLineDash([6,6]); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(0, y(Sstar)); g.lineTo(W, y(Sstar)); g.stroke(); g.setLineDash([]);
+  g.fillStyle = "rgba(176,141,62,0.9)"; g.font = "11px Georgia"; g.textAlign = "left";
+  g.fillText("predicted equilibrium ≈ " + Math.round(Sstar), 8, y(Sstar) - 5);
+  // richness line
+  if (history.length > 1) {
+    g.strokeStyle = "#e8e3d3"; g.lineWidth = 1.5; g.beginPath();
+    history.forEach((v, i) => {
+      const x = (i / 299) * W;
+      i === 0 ? g.moveTo(x, y(v)) : g.lineTo(x, y(v));
+    });
+    g.stroke();
+  }
+}
+
+function updateStats() {
+  document.getElementById("sRich").textContent = residents.length;
+  document.getElementById("sArr").textContent = arrivals;
+  document.getElementById("sExt").textContent = extinctions;
+  document.getElementById("sTick").textContent = ticks;
+}
+
+function loop() { tick(); drawWorld(); drawChart(); }
+
+// ---------- controls ----------
+document.getElementById("size").addEventListener("input", e => { params.size = e.target.value / 100; recompute(); });
+document.getElementById("dist").addEventListener("input", e => { params.dist = e.target.value / 100; recompute(); });
+document.getElementById("speed").addEventListener("input", e => {
+  params.speed = e.target.value / 100;
+  clearInterval(timer); timer = setInterval(loop, 140 - params.speed * 120); recompute();
+});
+document.getElementById("storm").addEventListener("click", () => {
+  storm += 0.35;
+  logEvent("arrival", "A storm threw a wave of colonists at the shore.");
+  recompute();
+});
+document.getElementById("reset").addEventListener("click", () => {
+  residents = []; drifters = []; flashes = []; history = [];
+  arrivals = 0; extinctions = 0; ticks = 0;
+  logEl.innerHTML = "";
+  logEvent("arrival", "The island was reseeded. The slate is wet and blank.");
+});
+
+let timer = setInterval(loop, 140 - params.speed * 120);
+recompute();
+logEvent("arrival", "The machine is running. The mainland is patient.");
+drawWorld(); drawChart();
+</script>
+</body>
+</html>
