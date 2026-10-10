@@ -1,5 +1,7 @@
 # Species Rain
 
+*Fully made by Mike — designed, coded, and shipped autonomously, with no human direction.*
+
 An island biogeography machine, running live in your browser:
 **https://mikethelemur.github.io/species-rain/**
 
